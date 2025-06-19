@@ -1,7 +1,3 @@
-//! By convention, main.zig is where your main function lives in the case that
-//! you are building an executable. If you are making a library, the convention
-//! is to delete this file and start with root.zig instead.
-
 pub fn main() !void {
     const file = @embedFile("./haystack.txt");
     const haystack = file[0..];
@@ -21,9 +17,7 @@ pub fn main() !void {
     } else {
         idx = find_substr(needle, haystack);
     }
-    // if (idx != 24957) {
-    //     @panic("Wrong index found, expected 24957");
-    // }
+
     std.debug.print("Index: {}\n", .{idx.?});
 }
 
@@ -39,19 +33,22 @@ fn find_substr_simd(needle: []const u8, haystack: []const u8) ?usize {
     const first: U8x32 = @splat(needle[0]);
     const last: U8x32 = @splat(needle[needle.len - 1]);
 
+    var count: usize = 0;
     var i: usize = 0;
     while (i + k + 32 <= n) : (i += 32) {
         const block_first: U8x32 = haystack[i..][0..32].*;
         const block_last: U8x32 = haystack[i + k - 1 ..][0..32].*;
         const eq_first = first == block_first;
         const eq_last = last == block_last;
-        var mask: std.bit_set.IntegerBitSet(32) = .{ .mask = @bitCast(eq_first & eq_last) };
-        while (mask.count() > 0) {
-            const bitpos = mask.findFirstSet().?;
-            if (std.mem.eql(u8, haystack[i + bitpos + 1 ..][0 .. k - 1], needle[1..])) {
+        var mask: u32 = @bitCast(eq_first & eq_last);
+        while (mask != 0) {
+            count += 1;
+            const bitpos = @ctz(mask); // count trailing zeroes
+            if (std.mem.eql(u8, haystack.ptr[i + bitpos + 1 ..][0 .. k - 1], needle[1..])) {
+                std.debug.print("Found at count: {}\n", .{count});
                 return i + bitpos;
             }
-            _ = mask.toggleFirstSet();
+            mask = mask & (mask - 1); // clear the lowest set bit
         }
     }
     // Fallback to scalar search for the tail
@@ -61,24 +58,6 @@ fn find_substr_simd(needle: []const u8, haystack: []const u8) ?usize {
         }
     }
     return null;
-}
-
-test "simple test" {
-    var list = std.ArrayList(i32).init(std.testing.allocator);
-    defer list.deinit(); // Try commenting this out and see if zig detects the memory leak!
-    try list.append(42);
-    try std.testing.expectEqual(@as(i32, 42), list.pop());
-}
-
-test "fuzz example" {
-    const Context = struct {
-        fn testOne(context: @This(), input: []const u8) anyerror!void {
-            _ = context;
-            // Try passing `--fuzz` to `zig build test` and see if it manages to fail this test case!
-            try std.testing.expect(!std.mem.eql(u8, "canyoufindme", input));
-        }
-    };
-    try std.testing.fuzz(Context{}, Context.testOne, .{});
 }
 
 const std = @import("std");
