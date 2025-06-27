@@ -1,6 +1,5 @@
 pub fn main() !void {
-    const file = @embedFile("./haystack.txt");
-    const haystack = file[0..];
+    const haystack = @embedFile("./haystack.txt");
     const needle = "newsletter";
 
     var use_simd = false;
@@ -30,6 +29,38 @@ fn find_substr_simd(needle: []const u8, haystack: []const u8) ?usize {
     const k = needle.len;
     if (k == 0 or k > n) return null;
     const Block = @Vector(32, u8);
+    const first: Block = @splat(needle[0]);
+    const last: Block = @splat(needle[needle.len - 1]);
+
+    var i: usize = 0;
+    while (i + k + 32 <= n) : (i += 32) {
+        const block_first: Block = haystack[i..][0..32].*;
+        const block_last: Block = haystack[i + k - 1 ..][0..32].*;
+        const eq_first = first == block_first;
+        const eq_last = last == block_last;
+        var mask: std.bit_set.IntegerBitSet(32) = .{ .mask = @bitCast(eq_first & eq_last) };
+        while (mask.count() > 0) {
+            const bitpos = mask.findFirstSet().?;
+            if (std.mem.eql(u8, haystack[i + bitpos + 1 ..][0 .. k - 1], needle[1..])) {
+                return i + bitpos;
+            }
+            _ = mask.toggleFirstSet();
+        }
+    }
+    // Fallback to scalar search for the tail
+    if (i < n) {
+        if (std.mem.indexOf(u8, haystack[i..], needle)) |rel_idx| {
+            return i + rel_idx;
+        }
+    }
+    return null;
+}
+
+fn find_substr_simd_v2(needle: []const u8, haystack: []const u8) ?usize {
+    const n = haystack.len;
+    const k = needle.len;
+    if (k == 0 or k > n) return null;
+    const Block = @Vector(32, u8);
 
     std.debug.assert(k >= 2);
     const needle_pair_indices = find_rarest(needle).?;
@@ -39,7 +70,6 @@ fn find_substr_simd(needle: []const u8, haystack: []const u8) ?usize {
     const second: Block = @splat(needle[needle_pair_indices[1]]);
     const second_offset = needle_pair_indices[1];
 
-    var count: usize = 0;
     var i: usize = 0;
     while (i + k + 32 <= n) : (i += 32) {
         const block_first: Block = haystack[i + first_offset ..][0..32].*;
@@ -47,13 +77,9 @@ fn find_substr_simd(needle: []const u8, haystack: []const u8) ?usize {
         const eq_first = first == block_first;
         const eq_second = second == block_second;
         var mask: u32 = @bitCast(eq_first & eq_second);
-        if (mask != 0) {
-            count += 1;
-        }
         while (mask != 0) {
             const bitpos = @ctz(mask); // count trailing zeroes
             if (std.mem.eql(u8, haystack.ptr[i + bitpos + 1 ..][0 .. k - 1], needle[1..])) {
-                std.debug.print("Found at count: {}\n", .{count});
                 return i + bitpos;
             }
             mask = mask & (mask - 1); // clear the lowest set bit
@@ -70,8 +96,16 @@ fn find_substr_simd(needle: []const u8, haystack: []const u8) ?usize {
 
 const std = @import("std");
 
-/// This imports the separate module containing `root.zig`. Take a look in `build.zig` for details.
-const lib = @import("substr_lib");
+const testing = std.testing;
+
+test "find_substr" {
+    const haystack = @embedFile("./haystack.txt");
+    const needle = "notfoundxx";
+
+    const expected = find_substr(needle, haystack);
+    const actual = find_substr_simd_v2(needle, haystack);
+    try testing.expectEqual(expected, actual);
+}
 
 fn find_rarest(needle: []const u8) ?[2]u8 {
     if (needle.len <= 1) {
