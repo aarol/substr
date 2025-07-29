@@ -2,20 +2,21 @@ pub fn main() !void {
     const haystack = @embedFile("./haystack.txt");
     const needle = "newsletter";
 
-    var use_simd = false;
+    var command = &find_substr;
+
     var it = std.process.args();
     while (it.next()) |arg| {
-        if (std.mem.startsWith(u8, arg, "--simd")) {
-            use_simd = true;
+        if (std.mem.eql(u8, arg, "--simd")) {
+            command = &find_substr_simd;
+            break;
+        }
+        if (std.mem.eql(u8, arg, "--simdv2")) {
+            command = &find_substr_simd_v2;
             break;
         }
     }
-    var idx: ?usize = undefined;
-    if (use_simd) {
-        idx = find_substr_simd(needle, haystack);
-    } else {
-        idx = find_substr(needle, haystack);
-    }
+
+    const idx = command(needle, haystack);
 
     std.debug.print("Index: {}\n", .{idx.?});
 }
@@ -29,18 +30,17 @@ fn find_substr_simd(needle: []const u8, haystack: []const u8) ?usize {
     const k = needle.len;
     if (k == 0 or k > n) return null;
     const Block = @Vector(32, u8);
-    const first: Block = @splat(needle[0]);
-    const last: Block = @splat(needle[needle.len - 1]);
+    const first_letter: Block = @splat(needle[0]);
+    const last_letter: Block = @splat(needle[needle.len - 1]);
 
     var i: usize = 0;
     while (i + k + 32 <= n) : (i += 32) {
-        const block_first: Block = haystack[i..][0..32].*;
-        const block_last: Block = haystack[i + k - 1 ..][0..32].*;
-        const eq_first = first == block_first;
-        const eq_last = last == block_last;
+        const first_block: Block = haystack[i..][0..32].*;
+        const last_block: Block = haystack[i + k - 1 ..][0..32].*;
+        const eq_first = first_letter == first_block;
+        const eq_last = last_letter == last_block;
         var mask: std.bit_set.IntegerBitSet(32) = .{ .mask = @bitCast(eq_first & eq_last) };
-        while (mask.count() > 0) {
-            const bitpos = mask.findFirstSet().?;
+        while (mask.findFirstSet()) |bitpos| {
             if (std.mem.eql(u8, haystack[i + bitpos + 1 ..][0 .. k - 1], needle[1..])) {
                 return i + bitpos;
             }
@@ -62,27 +62,25 @@ fn find_substr_simd_v2(needle: []const u8, haystack: []const u8) ?usize {
     if (k == 0 or k > n) return null;
     const Block = @Vector(32, u8);
 
-    std.debug.assert(k >= 2);
-    const needle_pair_indices = find_rarest(needle).?;
+    const needle_index_pair = find_rarest(needle).?;
 
-    const first: Block = @splat(needle[needle_pair_indices[0]]);
-    const first_offset = needle_pair_indices[0];
-    const second: Block = @splat(needle[needle_pair_indices[1]]);
-    const second_offset = needle_pair_indices[1];
+    const first_letter: Block = @splat(needle[needle_index_pair[0]]);
+    const first_offset = needle_index_pair[0];
+    const second_letter: Block = @splat(needle[needle_index_pair[1]]);
+    const second_offset = needle_index_pair[1];
 
     var i: usize = 0;
     while (i + k + 32 <= n) : (i += 32) {
-        const block_first: Block = haystack[i + first_offset ..][0..32].*;
-        const block_second: Block = haystack[i + second_offset ..][0..32].*;
-        const eq_first = first == block_first;
-        const eq_second = second == block_second;
-        var mask: u32 = @bitCast(eq_first & eq_second);
-        while (mask != 0) {
-            const bitpos = @ctz(mask); // count trailing zeroes
-            if (std.mem.eql(u8, haystack.ptr[i + bitpos + 1 ..][0 .. k - 1], needle[1..])) {
+        const first_block: Block = haystack[i + first_offset ..][0..32].*;
+        const second_block: Block = haystack[i + second_offset ..][0..32].*;
+        const eq_first = first_letter == first_block;
+        const eq_second = second_letter == second_block;
+        var mask: std.bit_set.IntegerBitSet(32) = .{ .mask = @bitCast(eq_first & eq_second) };
+        while (mask.findFirstSet()) |bitpos| {
+            if (std.mem.eql(u8, haystack[i + bitpos ..][0..k], needle)) {
                 return i + bitpos;
             }
-            mask = mask & (mask - 1); // clear the lowest set bit
+            _ = mask.toggleFirstSet();
         }
     }
     // Fallback to scalar search for the tail
@@ -100,7 +98,7 @@ const testing = std.testing;
 
 test "find_substr" {
     const haystack = @embedFile("./haystack.txt");
-    const needle = "notfoundxx";
+    const needle = "newsletter";
 
     const expected = find_substr(needle, haystack);
     const actual = find_substr_simd_v2(needle, haystack);
