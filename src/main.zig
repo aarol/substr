@@ -28,10 +28,11 @@ fn find_substr(needle: []const u8, haystack: []const u8) ?usize {
 fn find_substr_simd(needle: []const u8, haystack: []const u8) ?usize {
     const n = haystack.len;
     const k = needle.len;
+
     if (k == 0 or k > n) return null;
     const Block = @Vector(32, u8);
     const first_letter: Block = @splat(needle[0]);
-    const last_letter: Block = @splat(needle[needle.len - 1]);
+    const last_letter: Block = @splat(needle[k - 1]);
 
     var i: usize = 0;
     while (i + k + 32 <= n) : (i += 32) {
@@ -60,9 +61,10 @@ fn find_substr_simd_v2(needle: []const u8, haystack: []const u8) ?usize {
     const n = haystack.len;
     const k = needle.len;
     if (k == 0 or k > n) return null;
+
     const Block = @Vector(32, u8);
 
-    const needle_index_pair = find_rarest(needle).?;
+    const needle_index_pair = find_rarest(needle) orelse [2]u8{ 0, @intCast(k - 1) };
 
     const first_letter: Block = @splat(needle[needle_index_pair[0]]);
     const first_offset = needle_index_pair[0];
@@ -92,26 +94,15 @@ fn find_substr_simd_v2(needle: []const u8, haystack: []const u8) ?usize {
     return null;
 }
 
-const std = @import("std");
-
-const testing = std.testing;
-
-test "find_substr" {
-    const haystack = @embedFile("./haystack.txt");
-    const needle = "newsletter";
-
-    const expected = find_substr(needle, haystack);
-    const actual = find_substr_simd_v2(needle, haystack);
-    try testing.expectEqual(expected, actual);
-}
-
+// Finds the rarest two values in needle and returns their indices.
+// Author: BurntSushi
+// https://github.com/BurntSushi/memchr/blob/3962118774ac511580c5b40fd14323e31629fa52/src/arch/all/packedpair/mod.rs#L163
 fn find_rarest(needle: []const u8) ?[2]u8 {
-    if (needle.len <= 1) {
+    if (needle.len <= 1 or needle.len > 256) {
         return null;
     }
-    std.debug.assert(needle.len <= 256);
 
-    var rare1 = needle[0];
+    var rare1: u8 = needle[0];
     var index1: u8 = 0;
     var rare2: u8 = needle[1];
     var index2: u8 = 1;
@@ -135,6 +126,10 @@ fn find_rarest(needle: []const u8) ?[2]u8 {
     return [2]u8{ index1, index2 };
 }
 
+// Precalculated background frequency distribution
+// Smaller = less common
+// Author: BurntSushi
+// https://github.com/BurntSushi/memchr/blob/master/src/arch/all/packedpair/default_rank.rs
 const RANK = [256]u8{
     55, // '\x00'
     52, // '\x01'
@@ -393,3 +388,16 @@ const RANK = [256]u8{
     255, // 'þ'
     255, // 'ÿ'
 };
+
+const std = @import("std");
+
+const testing = std.testing;
+
+test "find_substr" {
+    const haystack = @embedFile("./haystack.txt");
+    const needle = "newsletter";
+
+    const expected = find_substr(needle, haystack);
+    const actual = find_substr_simd_v2(needle, haystack);
+    try testing.expectEqual(expected, actual);
+}
