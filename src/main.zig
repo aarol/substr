@@ -1,8 +1,10 @@
 pub fn main() !void {
-    const haystack = @embedFile("./haystack.txt");
+    const haystack_big = @embedFile("./haystack.txt");
+    const haystack_small = @embedFile("./haystack-small.txt");
     const needle = "newsletter";
 
     var command = &find_substr;
+    var haystack = haystack_big;
 
     var it = std.process.args();
     while (it.next()) |arg| {
@@ -13,6 +15,9 @@ pub fn main() !void {
         if (std.mem.eql(u8, arg, "--simdv2")) {
             command = &find_substr_simd_v2;
             break;
+        }
+        if (std.mem.eql(u8, arg, "--small")) {
+            haystack = haystack_small;
         }
     }
 
