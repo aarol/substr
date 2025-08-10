@@ -4,7 +4,7 @@ pub fn main() !void {
     const needle = "newsletter";
 
     var command = &find_substr;
-    var haystack = haystack_big;
+    var haystack: []const u8 = haystack_big;
 
     var it = std.process.args();
     while (it.next()) |arg| {
@@ -405,4 +405,32 @@ test "find_substr" {
     const expected = find_substr(needle, haystack);
     const actual = find_substr_simd_v2(needle, haystack);
     try testing.expectEqual(expected, actual);
+}
+
+fn benchmarkFindSubstr(_: std.mem.Allocator) void {
+    const haystack_small = @embedFile("./haystack-small.txt");
+    const needle = "precisely";
+    const idx = find_substr(needle, haystack_small);
+    if (idx != 76) {
+        @panic("find_substr wrong index!");
+    }
+}
+fn benchmarkFindSubstrSimdV2(_: std.mem.Allocator) void {
+    const haystack_small = @embedFile("./haystack-small.txt");
+    const needle = "precisely";
+    const idx = find_substr_simd_v2(needle, haystack_small);
+    if (idx != 76) {
+        @panic("find_substr_simd_v2 wrong index!");
+    }
+}
+
+const zbench = @import("zbench");
+test "bench find_substr" {
+    var bench = zbench.Benchmark.init(std.testing.allocator, .{});
+    defer bench.deinit();
+    try bench.add("find_substr", benchmarkFindSubstr, .{});
+    try bench.add("find_substr_simd_v2", benchmarkFindSubstrSimdV2, .{});
+
+    var w = std.fs.File.stderr().writer(&.{});
+    try bench.run(&w.interface);
 }
