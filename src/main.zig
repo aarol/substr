@@ -16,6 +16,10 @@ pub fn main() !void {
             command = &find_substr_simd_v2;
             break;
         }
+        if (std.mem.eql(u8, arg, "--simdv3")) {
+            command = &find_substr_simd_v3;
+            break;
+        }
         if (std.mem.eql(u8, arg, "--small")) {
             haystack = haystack_small;
         }
@@ -69,12 +73,11 @@ fn find_substr_simd_v2(needle: []const u8, haystack: []const u8) ?usize {
 
     const Block = @Vector(32, u8);
 
-    const needle_index_pair = find_rarest(needle) orelse [2]u8{ 0, @intCast(k - 1) };
+    const first_offset, const second_offset =
+        find_rarest(needle) orelse [2]usize{ 0, @intCast(k - 1) };
 
-    const first_letter: Block = @splat(needle[needle_index_pair[0]]);
-    const first_offset = needle_index_pair[0];
-    const second_letter: Block = @splat(needle[needle_index_pair[1]]);
-    const second_offset = needle_index_pair[1];
+    const first_letter: Block = @splat(needle[first_offset]);
+    const second_letter: Block = @splat(needle[second_offset]);
 
     var i: usize = 0;
     while (i + k + 32 <= n) : (i += 32) {
@@ -99,21 +102,58 @@ fn find_substr_simd_v2(needle: []const u8, haystack: []const u8) ?usize {
     return null;
 }
 
+fn find_substr_simd_v3(needle: []const u8, haystack: []const u8) ?usize {
+    const n = haystack.len;
+    const k = needle.len;
+    if (k == 0 or k > n) return null;
+
+    const block_size = std.simd.suggestVectorLength(u8).?; // assumes SIMD support
+    const Block = @Vector(block_size, u8);
+
+    const first_offset, const second_offset =
+        find_rarest(needle) orelse [2]usize{ 0, @intCast(k - 1) };
+
+    const first_letter: Block = @splat(needle[first_offset]);
+    const second_letter: Block = @splat(needle[second_offset]);
+
+    var i: usize = 0;
+    while (i + k + block_size <= n) : (i += block_size) {
+        const first_block: Block = haystack[i + first_offset ..][0..block_size].*;
+        const second_block: Block = haystack[i + second_offset ..][0..block_size].*;
+        const eq_first = first_letter == first_block;
+        const eq_second = second_letter == second_block;
+        var mask: std.bit_set.IntegerBitSet(block_size) = .{ .mask = @bitCast(eq_first & eq_second) };
+        while (mask.findFirstSet()) |bitpos| {
+            if (std.mem.eql(u8, haystack[i + bitpos ..][0..k], needle)) {
+                return i + bitpos;
+            }
+            _ = mask.toggleFirstSet();
+        }
+    }
+    // Fallback to scalar search for the tail
+    if (i < n) {
+        if (std.mem.indexOf(u8, haystack[i..], needle)) |rel_idx| {
+            return i + rel_idx;
+        }
+    }
+    return null;
+}
+
 // Finds the rarest two values in needle and returns their indices.
 // Author: BurntSushi
 // https://github.com/BurntSushi/memchr/blob/3962118774ac511580c5b40fd14323e31629fa52/src/arch/all/packedpair/mod.rs#L163
-fn find_rarest(needle: []const u8) ?[2]u8 {
+fn find_rarest(needle: []const u8) ?[2]usize {
     if (needle.len <= 1 or needle.len > 256) {
         return null;
     }
 
     var rare1: u8 = needle[0];
-    var index1: u8 = 0;
+    var index1: usize = 0;
     var rare2: u8 = needle[1];
-    var index2: u8 = 1;
+    var index2: usize = 1;
     if (RANK[rare2] < RANK[rare1]) {
         std.mem.swap(u8, &rare1, &rare2);
-        std.mem.swap(u8, &index1, &index2);
+        std.mem.swap(usize, &index1, &index2);
     }
     for (needle[2..], 2..) |b, i| {
         if (RANK[b] < RANK[rare1]) {
@@ -128,7 +168,7 @@ fn find_rarest(needle: []const u8) ?[2]u8 {
     }
 
     std.debug.assert(index1 != index2);
-    return [2]u8{ index1, index2 };
+    return [2]usize{ index1, index2 };
 }
 
 // Precalculated background frequency distribution

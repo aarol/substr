@@ -1,5 +1,5 @@
-= Zig substr
+# Zig substr
 
 SIMD accelerated substring search in Zig
 
-Learning project only, don't use in production
+See [this blog post](https://aarol.dev/posts/zig-simd-substr/).
